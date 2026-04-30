@@ -119,6 +119,27 @@ bun run build
 
 Fix any failures. Auto-fix lint: `bun run lint:fix`.
 
+### 5b. E2E (UI-touching changes)
+
+If the change touches a UI surface listed in the project's E2E capability matrix (typically defined in `.claude/rules/e2e.md` and/or `e2e/README.md`), affected E2E specs MUST pass before merge.
+
+```bash
+# Preferred: project ships a diff-aware selector
+./scripts/e2e-affected.sh main   # prints affected tags + the playwright command
+
+# Fallback: run by capability tag manually
+bun run test:e2e:critical
+```
+
+**Hard gate (per-wave rule):** an E2E spec must exist or be extended for any change that adds/modifies a UI surface in the capability matrix. This rule traces to a documented incident where backfilled E2E hid regressions across multiple PRs — see manager memory `feedback_e2e_per_wave.md`. The manager refuses to merge if:
+
+- Affected E2E specs fail (read `test-results/agent-summary.md` for the failure list), or
+- The PR's UI epic has no E2E sibling task (per `/backlog`'s auto-create rule).
+
+If the project doesn't yet have an E2E capability matrix, file a follow-up issue and proceed; do not block on absent infrastructure. Once a matrix exists, the gate applies to every UI-touching PR.
+
+Skip E2E only when the change provably has no UI surface (pure backend types, internal refactor, docs).
+
 ### 5.5. Alterego Review (`--alterego` flag only)
 
 When `--alterego` is passed, run the Codex cross-model convergence loop after validation and before committing.
@@ -194,6 +215,7 @@ Print the PR URL. Done.
 - **Claim before work** — always set `in-progress` and remove `ready` before creating the branch
 - **Claim removes `ready`; failure restores it** — on happy path, `ready` is gone after claim; on failure/abort, restore `ready` when removing `in-progress`
 - **Release claim on exit** — always update labels on exit (success: remove `in-progress`; failure: remove `in-progress` + restore `ready`)
+- **E2E ships in the same wave as the feature** — UI-touching PRs require affected E2E to pass before merge AND require the parent epic to have an E2E sibling task (auto-created by `/backlog`). Backfilling E2E after an epic closes hides regressions; this is non-negotiable when a capability matrix exists in the project.
 
 ## What `/build` Does NOT Do
 

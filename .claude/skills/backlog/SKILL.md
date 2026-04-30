@@ -59,6 +59,17 @@ The primary responsibility. Takes a spec epic and produces build-ready work item
    - **Dependencies** — which other work items must complete first. During PlanMode, use ordering (create foundation items first). Once issues are created, reference them by `#N` GH issue number only — never "WI-A", "WI-B", or other codes.
    - **Test plan** — derived from acceptance criteria
 
+   **E2E sibling task (UI epics only):** If the epic touches a UI surface in the project's E2E capability matrix (see `.claude/rules/e2e.md` and/or `e2e/README.md`), append a final E2E work item that covers the new/modified UI flow. This task:
+
+   - Is created last and listed under "Build order" after all feature work items
+   - Has `blocked-by` relationships to every feature work item in the epic (wired natively in step 6 below)
+   - Title format: `Add E2E coverage for <epic feature>`
+   - Implementation approach references the relevant capability folder (e.g., `e2e/capabilities/dashboard/invoicing/`) and reuses the auth-reuse fixtures (`useAdmin`, `useBidder`) — never re-does login UI
+   - Acceptance criteria: smoke + happy path by default; deeper coverage (validation, edge cases) is a separate follow-up issue unless the spec explicitly requires it
+   - Tagging: at least one capability tag (e.g., `@dashboard`, `@bidding`) plus `@critical` if on a v1 critical path
+
+   This is the hard gate that prevents E2E backfill — see manager memory `feedback_e2e_per_wave.md` and the `/build` skill's "E2E ships in the same wave as the feature" rule. If the project doesn't yet have an E2E capability matrix, note it as a follow-up but still create the E2E task with a placeholder approach.
+
 4. **Present for approval** — show the user the proposed work items via `AskUserQuestion`. The user approves, revises, or reorders.
 
 5. **Create issues** — for each approved work item. Title must be verb-first with no prefix codes:
@@ -265,6 +276,7 @@ Available from the global orchestration directory only (where `.claudius/config.
 - **Build order matters** — create issues in dependency order, note dependencies explicitly
 - **Each work item = one session** — if a work item needs more than one branch/PR, split it
 - **Wire relationships after creation** — run the relationship script after all issue numbers are known, not issue-by-issue mid-creation
+- **UI epic must have E2E sibling task** — if the epic touches a UI surface in the project's capability matrix, the decomposition includes a final E2E task blocked-by all feature tasks. Without this, the epic cannot be considered build-ready and the `/build` skill's per-wave gate will refuse to merge feature PRs.
 
 ## Anti-Patterns (Do Not)
 

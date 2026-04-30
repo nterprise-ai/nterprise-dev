@@ -60,6 +60,42 @@ Identify gaps: which flows have no E2E coverage? Which API routes have no integr
 - API test client factory
 - Auth test helpers (create test user, get token)
 
+### 3.5. Capability Matrix (E2E)
+
+When generating multiple E2E specs, organize them under `e2e/capabilities/` mirroring the feature surface. Recommended layout:
+
+```
+e2e/capabilities/
+  smoke/        — quick sanity checks, every PR must pass these
+  auth/         — login, logout, password reset, signup (the ONLY place auth UI is exercised)
+  dashboard/    — admin/back-office UI per feature (auctions, invoicing, settings, etc.)
+  website/      — public + bidder-facing UI
+  bidding/      — realtime / multi-client / websocket-sensitive flows
+  cross-app/    — flows spanning two apps end-to-end
+```
+
+Tag each spec for selective runs:
+
+| Tag | Purpose |
+|---|---|
+| `@smoke` | every PR |
+| `@critical` | irreplaceable happy paths; every PR |
+| `@auth` | auth UI changes |
+| `@<area>` | feature-area tag (`@dashboard`, `@bidding`, etc.) |
+| `@realtime` | websocket / multi-client (subset of `@bidding`) |
+
+A diff-aware selector (e.g. `scripts/e2e-affected.sh`) maps changed paths → tags so the agent runs only the relevant subset before merge.
+
+### 3.6. Auth Reuse (E2E)
+
+Auth UI is exercised in **exactly one place** — the `auth/` capability specs. Every other spec uses pre-authenticated sessions via Playwright's `storageState` (one project per role: `chromium-admin`, `chromium-bidder`, etc.). The `setup` project stamps a session into a JSON file once per run; all other projects load that file.
+
+Rules:
+- **Never call `/signin` or `/login` UI from non-auth specs.** Use the role-specific project's storage state.
+- **Issue test sessions via a backend mutation, not the OTP/email flow.** A test-only Convex/server mutation that returns a session token (gated on `NODE_ENV !== 'production'`) is the right pattern — it's deterministic and avoids email plumbing in setup.
+- **Provide fail-fast fixtures** like `useAdmin()` / `useBidder(n)` that assert the spec is running under the correct project. A spec that forgets to declare `use: { storageState: '...' }` should error loudly, not silently log in via UI.
+- **Selectors use `data-testid`.** Auth selectors especially — they're hot paths used by every spec via the setup project.
+
 ### 4. Generate E2E Tests (`--e2e`)
 
 For each critical user flow from `design/flows/`:
@@ -161,3 +197,4 @@ Run: bun run test && npx playwright test
 - **Don't write tests without reading flows** — E2E tests must trace to documented user flows
 - **Don't skip auth in integration tests** — test both authenticated and unauthenticated paths
 - **Don't generate tests that can't run** — if Playwright isn't set up, set it up first
+- **Don't perform auth UI in non-auth specs** — use `storageState` projects + `useAdmin()/useBidder(n)`-style fixtures. Specs that re-do login UI are slow, fragile, and double-test the auth surface. The `auth/` capability is the only place login UI runs.
