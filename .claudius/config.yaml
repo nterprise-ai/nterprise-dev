@@ -1,5 +1,5 @@
 # Claudius Configuration
-configVersion: 2
+configVersion: 3
 
 engage: terminal # terminal | chat-sdk
 deploy: none # vercel | fly | none
@@ -18,27 +18,9 @@ autonomy:
   autoMerge: false
   maxTeamSize: 3
 
-pulse:
-  enabled: false
-  intervalMinutes: 15
-  budgetCapUsd: 50
-  maxIssuesPerDay: 5
-  requireApprovalFor: [merge, deploy]
-  pauseOnFailure: true
-  maxConsecutiveFailures: 3
-  ideation:
-    maxCandidates: 10
-    maxToCreate: 3
-    autoExecuteLabels: [bug, chore, test]
-    requireApprovalLabels: [feat]
-    discussionCategory: Ideas
-  timezone: Asia/Bangkok
-  activeHours:
-    start: 09:00
-    end: 22:00
-
 jobs:
   enabled: false
+  dir: .claudius/jobs
 
 slack:
   channel: ""
@@ -49,3 +31,25 @@ owner:
   timezone: Asia/Bangkok
 
 goals: []
+daemon:
+  enabled: false
+  intervalMinutes: 15
+  budgetCapUsd: 50
+  maxIssuesPerDay: 5
+  requireApprovalFor: [ merge, deploy ]
+  pauseOnFailure: true
+  maxConsecutiveFailures: 3
+  ideation:
+    maxCandidates: 10
+    maxToCreate: 3
+    autoExecuteLabels: [ bug, chore, test ]
+    requireApprovalLabels: [ feat ]
+    discussionCategory: Ideas
+  timezone: Asia/Bangkok
+  activeHours:
+    start: 09:00
+    end: 22:00
+studio:
+  enabled: true
+  slimEnabled: true
+  port: 0
