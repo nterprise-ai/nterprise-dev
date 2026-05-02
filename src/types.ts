@@ -40,6 +40,13 @@ export interface TenantConfig {
 	 */
 	slugs: string[] | (() => Promise<string[]>);
 	/**
+	 * Tenant hostname layout relative to {@link DevServerConfig.tld}.
+	 *
+	 * - `"nested"` (default): `{slug}.{appName}.{tld}`
+	 * - `"flat"`: `{slug}.{tld}` — wildcard-style tenant hosts (must match app routing)
+	 */
+	tenantHostMode?: "nested" | "flat";
+	/**
 	 * Build the portless alias name for a slug.
 	 * Defaults to: (slug, app) => `${slug}.${app}`
 	 * e.g. "acme" → "acme.auctionomy-website" → https://acme.auctionomy-website.test:1355
