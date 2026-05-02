@@ -6,6 +6,7 @@ import { runPreflightOrFix } from "./doctor";
 import { ensureEnvFiles } from "./env-files";
 import { hasPortless } from "./portless";
 import { loadEnvStack } from "./read-env-stack";
+import { computeTenantHostname } from "./tenant-hostname";
 import type { AppConfig, DevServerConfig, ResolvedDevServerConfig, TenantConfig } from "./types";
 
 interface RouteEntry {
@@ -447,13 +448,6 @@ async function resolveTenantSlugs(tenants: TenantConfig | undefined): Promise<st
 	return Array.isArray(raw) ? raw : await raw();
 }
 
-function tenantHostname(slug: string, tenants: TenantConfig, app: AppConfig, tld?: string): string {
-	const aliasBase = tenants.slugToAlias
-		? tenants.slugToAlias(slug, app.name)
-		: `${slug}.${app.name}`;
-	return tld ? `${aliasBase}.${tld}` : aliasBase;
-}
-
 export async function createDevServer(config: ResolvedDevServerConfig): Promise<void> {
 	const { projectName, apps, envFiles, devCommand = "dev", tenants } = config;
 	const configTld = config.tld;
@@ -559,7 +553,7 @@ export async function createDevServer(config: ResolvedDevServerConfig): Promise<
 		if (tenantApp && tenantPort) {
 			const slugs = await resolveTenantSlugs(tenants);
 			for (const slug of slugs) {
-				const hostname = tenantHostname(slug, tenants, tenantApp, configTld);
+				const hostname = computeTenantHostname(slug, tenants, tenantApp, configTld);
 				routeEntries.push({ hostname, port: tenantPort, pid: 0 });
 			}
 		}
@@ -601,7 +595,7 @@ export function createDevDown(config: ResolvedDevServerConfig): void {
 		const tenantApp = config.apps.find((app) => app.name === config.tenants?.app);
 		if (tenantApp) {
 			for (const slug of config.tenants.slugs) {
-				hostnames.push(tenantHostname(slug, config.tenants, tenantApp, config.tld));
+				hostnames.push(computeTenantHostname(slug, config.tenants, tenantApp, config.tld));
 			}
 		}
 	}

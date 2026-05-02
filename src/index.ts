@@ -6,6 +6,7 @@
  */
 
 export { createDevDown, createDevServer, normalizeConfig } from "./dev-server";
+export { computeTenantHostname } from "./tenant-hostname";
 export { ensureEnvFiles } from "./env-files";
 export type { PortlessRoute } from "./portless";
 export {

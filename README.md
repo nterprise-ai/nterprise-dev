@@ -35,10 +35,17 @@ Per-repo dev config lives at `package.json#nterprise` (legacy keys `#portfree`, 
     "projectName": "my-project",
     "apps": ["web", "api"],
     "tld": "dev.example.com",
-    "https": true
+    "https": true,
+    "tenants": {
+      "app": "website",
+      "tenantHostMode": "flat",
+      "slugs": ["demo", "acme"]
+    }
   }
 }
 ```
+
+With `tld` set, tenant Portless routes default to **`{slug}.{appName}.{tld}`** (nested under the chosen app). For wildcard-style tenant hosts **`{slug}.{tld}`** (e.g. `acme.dev.example.com`), set **`tenantHostMode`** to **`"flat"`**. Omit it or use **`"nested"`** for the legacy layout.
 
 Multi-repo registry: `~/.config/nterprise/repos.json`. Per-repo state: `~/.config/nterprise/state/<name>.{pid,log}`.
 
