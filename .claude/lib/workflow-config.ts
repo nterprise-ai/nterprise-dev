@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { resolve } from "node:path";
 
 /**
  * Shared Workflow Configuration
@@ -11,7 +11,7 @@ import { resolve } from 'node:path';
  */
 
 /** Branches protected from direct commits/pushes */
-export const PROTECTED_BRANCHES = ['main', 'master'] as const;
+export const PROTECTED_BRANCHES = ["main", "master"] as const;
 
 /** Branch naming patterns */
 export const BRANCH_PATTERNS = {
@@ -20,15 +20,15 @@ export const BRANCH_PATTERNS = {
 	/** Matches native worktree branches: worktree-<name> */
 	worktreeBranch: /^worktree-(\d+)$/,
 	/** All valid branch type prefixes */
-	validTypes: ['feat', 'fix', 'chore'] as const,
+	validTypes: ["feat", "fix", "chore"] as const,
 } as const;
 
 /** Worktree configuration */
 export const WORKTREE = {
 	/** Native base directory for claude -w worktrees */
-	nativeBasePath: '.claude/worktrees',
+	nativeBasePath: ".claude/worktrees",
 	/** All base paths to check */
-	allBasePaths: ['.claude/worktrees'] as const,
+	allBasePaths: [".claude/worktrees"] as const,
 } as const;
 
 // ─── Branch / Worktree Utilities ─────────────────────────────────────────────
@@ -58,29 +58,26 @@ export function extractIssueFromBranch(branch: string): number | null {
 export interface WorktreeInfo {
 	inWorktree: boolean;
 	root: string | null;
-	source: 'native' | null;
+	source: "native" | null;
 	name: string | null;
 }
 
 /**
  * Detect if a file path is inside any known worktree directory.
  */
-export function getWorktreeInfo(
-	filePath: string,
-	projectDir: string,
-): WorktreeInfo {
+export function getWorktreeInfo(filePath: string, projectDir: string): WorktreeInfo {
 	const absolutePath = resolve(projectDir, filePath);
 
 	for (const basePath of WORKTREE.allBasePaths) {
 		const worktreesDir = resolve(projectDir, basePath);
 		if (absolutePath.startsWith(`${worktreesDir}/`)) {
 			const relativePath = absolutePath.slice(worktreesDir.length + 1);
-			const worktreeName = relativePath.split('/')[0];
+			const worktreeName = relativePath.split("/")[0];
 			if (worktreeName) {
 				return {
 					inWorktree: true,
 					root: resolve(worktreesDir, worktreeName),
-					source: 'native',
+					source: "native",
 					name: worktreeName,
 				};
 			}
@@ -93,10 +90,7 @@ export function getWorktreeInfo(
 /**
  * Check if a git toplevel path is inside a known worktree directory.
  */
-export function isInWorktreePath(
-	toplevel: string,
-	projectDir: string,
-): boolean {
+export function isInWorktreePath(toplevel: string, projectDir: string): boolean {
 	for (const basePath of WORKTREE.allBasePaths) {
 		const worktreesDir = resolve(projectDir, basePath);
 		if (toplevel.startsWith(worktreesDir)) return true;

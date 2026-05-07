@@ -18,8 +18,8 @@
  * Fails open on any error to avoid blocking legitimate work.
  */
 
-import { execSync } from 'node:child_process';
-import { relative, resolve } from 'node:path';
+import { execSync } from "node:child_process";
+import { relative, resolve } from "node:path";
 
 interface HookInput {
 	tool_input?: {
@@ -28,25 +28,25 @@ interface HookInput {
 }
 
 interface HookOutput {
-	decision: 'approve' | 'block';
+	decision: "approve" | "block";
 	reason?: string;
 }
 
 async function parseInput(): Promise<HookInput> {
 	return new Promise((resolve) => {
-		let data = '';
-		process.stdin.setEncoding('utf-8');
-		process.stdin.on('data', (chunk) => {
+		let data = "";
+		process.stdin.setEncoding("utf-8");
+		process.stdin.on("data", (chunk) => {
 			data += chunk;
 		});
-		process.stdin.on('end', () => {
+		process.stdin.on("end", () => {
 			try {
 				resolve(data.trim() ? JSON.parse(data) : {});
 			} catch {
 				resolve({});
 			}
 		});
-		process.stdin.on('error', () => {
+		process.stdin.on("error", () => {
 			resolve({});
 		});
 		setTimeout(() => {
@@ -56,61 +56,45 @@ async function parseInput(): Promise<HookInput> {
 }
 
 function allow(): void {
-	process.stdout.write(
-		JSON.stringify({ decision: 'approve' } satisfies HookOutput),
-	);
+	process.stdout.write(JSON.stringify({ decision: "approve" } satisfies HookOutput));
 }
 
 function block(reason: string): void {
-	process.stdout.write(
-		JSON.stringify({ decision: 'block', reason } satisfies HookOutput),
-	);
+	process.stdout.write(JSON.stringify({ decision: "block", reason } satisfies HookOutput));
 }
 
 export function isSessionInWorktree(projectDir: string): boolean {
-	return projectDir.includes('/.claude/worktrees/');
+	return projectDir.includes("/.claude/worktrees/");
 }
 
 /** Derives the main repo root from git's common dir. Returns null on failure. */
 export function getMainRepoRoot(worktreeRoot: string): string | null {
 	try {
-		const gitCommonDir = execSync('git rev-parse --git-common-dir', {
-			encoding: 'utf-8',
-			stdio: ['pipe', 'pipe', 'pipe'],
+		const gitCommonDir = execSync("git rev-parse --git-common-dir", {
+			encoding: "utf-8",
+			stdio: ["pipe", "pipe", "pipe"],
 			cwd: worktreeRoot,
 		}).trim();
 
 		const absoluteGitDir = resolve(worktreeRoot, gitCommonDir);
-		return absoluteGitDir.endsWith('/.git')
-			? absoluteGitDir.slice(0, -5)
-			: null;
+		return absoluteGitDir.endsWith("/.git") ? absoluteGitDir.slice(0, -5) : null;
 	} catch {
 		return null;
 	}
 }
 
-export function checkPath(
-	filePath: string,
-	projectDir: string,
-	mainRepoRoot: string,
-): HookOutput {
+export function checkPath(filePath: string, projectDir: string, mainRepoRoot: string): HookOutput {
 	const worktreeRoot = projectDir;
 	const absoluteFilePath = resolve(worktreeRoot, filePath);
 
 	// Already inside the worktree — fine
-	if (
-		absoluteFilePath.startsWith(`${worktreeRoot}/`) ||
-		absoluteFilePath === worktreeRoot
-	) {
-		return { decision: 'approve' };
+	if (absoluteFilePath.startsWith(`${worktreeRoot}/`) || absoluteFilePath === worktreeRoot) {
+		return { decision: "approve" };
 	}
 
 	// Path outside both worktree and main repo — not our concern
-	if (
-		!absoluteFilePath.startsWith(`${mainRepoRoot}/`) &&
-		absoluteFilePath !== mainRepoRoot
-	) {
-		return { decision: 'approve' };
+	if (!absoluteFilePath.startsWith(`${mainRepoRoot}/`) && absoluteFilePath !== mainRepoRoot) {
+		return { decision: "approve" };
 	}
 
 	// Path targets main repo while session is in a worktree — block
@@ -118,7 +102,7 @@ export function checkPath(
 	const worktreeEquivalent = resolve(worktreeRoot, relPath);
 
 	return {
-		decision: 'block',
+		decision: "block",
 		reason:
 			`[worktree-path-guard] Write blocked: path targets the main repo, not this worktree.\n\n` +
 			`  Session worktree: ${worktreeRoot}\n` +
@@ -154,7 +138,7 @@ async function main(): Promise<void> {
 	}
 
 	const result = checkPath(filePath, projectDir, mainRepoRoot);
-	if (result.decision === 'block' && result.reason) {
+	if (result.decision === "block" && result.reason) {
 		block(result.reason);
 	} else {
 		allow();

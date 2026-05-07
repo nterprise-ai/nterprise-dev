@@ -7,7 +7,7 @@
  * Warns at 50% of budget, advisory blocks at 90%.
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 interface CostEntry {
@@ -35,10 +35,7 @@ function main() {
 	let totalSpend = 0;
 	if (existsSync(costLogPath)) {
 		try {
-			const lines = readFileSync(costLogPath, "utf-8")
-				.trim()
-				.split("\n")
-				.filter(Boolean);
+			const lines = readFileSync(costLogPath, "utf-8").trim().split("\n").filter(Boolean);
 			totalSpend = lines.reduce((sum, line) => {
 				const entry: CostEntry = JSON.parse(line);
 				return sum + (entry.amountUsd || 0);

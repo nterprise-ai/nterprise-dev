@@ -7,8 +7,8 @@
  * .claudius/gaps.jsonl, and prompts /reflect for substantive sessions.
  */
 
-import { readFileSync, appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 interface Gap {
 	category: string;
@@ -83,18 +83,14 @@ function main() {
 	const messages: string[] = [];
 
 	if (gaps.length > 0) {
-		messages.push(
-			`Captured ${gaps.length} gap(s) to .claudius/gaps.jsonl.`,
-		);
+		messages.push(`Captured ${gaps.length} gap(s) to .claudius/gaps.jsonl.`);
 	}
 
 	// Check if substantive work happened (heuristic: transcript length)
 	const isSubstantive = transcript.length > 500;
 
 	if (isSubstantive) {
-		messages.push(
-			"Substantive session detected. Run /reflect to capture learnings to memory.",
-		);
+		messages.push("Substantive session detected. Run /reflect to capture learnings to memory.");
 	}
 
 	// Check for uncaptured gaps in recent work

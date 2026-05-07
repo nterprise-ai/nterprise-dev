@@ -1,4 +1,5 @@
 #!/usr/bin/env npx tsx
+
 /**
  * Guardian Hook — Branch protection + git safety
  * Trigger: PreToolUse (Write|Edit|Bash)
@@ -19,10 +20,10 @@
  * Force push and hard reset are always blocked on any home branch.
  */
 
-import { readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { isProtectedBranch, isInWorktreePath } from "../lib/workflow-config.ts";
+import { isInWorktreePath, isProtectedBranch } from "../lib/workflow-config.ts";
 
 interface HookInput {
 	tool_name: string;
@@ -202,8 +203,7 @@ function main() {
 
 // Only run when executed directly (not imported for tests)
 const isDirectExecution =
-	process.argv[1]?.endsWith("guardian.ts") ||
-	import.meta.url === `file://${process.argv[1]}`;
+	process.argv[1]?.endsWith("guardian.ts") || import.meta.url === `file://${process.argv[1]}`;
 if (isDirectExecution) {
 	main();
 }

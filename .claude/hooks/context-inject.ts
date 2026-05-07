@@ -7,7 +7,7 @@
  * awareness into every subagent spawned by the manager.
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 function getBudgetInfo(): string {
@@ -50,7 +50,12 @@ function getGoals(): string {
 		if (!goalsMatch) return "";
 		const goals = goalsMatch[1]
 			.split("\n")
-			.map((l) => l.replace(/^\s+-\s+/, "").replace(/^["']|["']$/g, "").trim())
+			.map((l) =>
+				l
+					.replace(/^\s+-\s+/, "")
+					.replace(/^["']|["']$/g, "")
+					.trim(),
+			)
 			.filter(Boolean);
 		if (goals.length === 0) return "";
 		return `### Project Goals\n${goals.map((g) => `- ${g}`).join("\n")}\n\nAlign your work with these goals. Prioritize actions that advance them.`;
