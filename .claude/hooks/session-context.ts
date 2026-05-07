@@ -1,4 +1,5 @@
 #!/usr/bin/env npx tsx
+
 /**
  * Personality Inject Hook — Load Claudius personality + branch state into session context
  * Trigger: SessionStart
@@ -10,10 +11,10 @@
  * Fails silently if the file is missing — never blocks session startup.
  */
 
-import { readFileSync, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { isProtectedBranch, isInWorktreePath } from "../lib/workflow-config.ts";
+import { isInWorktreePath, isProtectedBranch } from "../lib/workflow-config.ts";
 
 export function getCurrentBranch(): string {
 	try {
@@ -35,10 +36,14 @@ function detectInWorktree(): boolean {
 	const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 	try {
 		const toplevel = execSync("git rev-parse --show-toplevel", {
-			cwd, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"],
+			cwd,
+			encoding: "utf-8",
+			stdio: ["pipe", "pipe", "pipe"],
 		}).trim();
 		const gitCommonDir = execSync("git rev-parse --git-common-dir", {
-			cwd, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"],
+			cwd,
+			encoding: "utf-8",
+			stdio: ["pipe", "pipe", "pipe"],
 		}).trim();
 		const projectDir = resolve(toplevel, gitCommonDir, "..");
 		return isInWorktreePath(toplevel, projectDir);

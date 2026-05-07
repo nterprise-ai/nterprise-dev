@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 /**
  * Claudius Slack CLI — generic messaging primitives for agent use.
  *
@@ -14,9 +15,9 @@
  *   SLACK_SIGNING_SECRET optional (only needed for incoming webhooks)
  */
 
-import { Chat, ThreadImpl } from "chat";
 import { createSlackAdapter } from "@chat-adapter/slack";
 import { createMemoryState } from "@chat-adapter/state-memory";
+import { Chat, ThreadImpl } from "chat";
 
 // ── Arg parsing ──────────────────────────────────────────────────────────────
 
