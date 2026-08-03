@@ -36,6 +36,33 @@ const OLD_PLIST_PATH = "/Library/LaunchDaemons/dev.portfree.pfctl.plist";
 
 const TLS_PORT = 1355;
 const HTTPS_PORT = 443;
+/** Slim's local HTTPS listener — competes with Portless for the port-443 PF redirect. */
+export const SLIM_PROXY_PORT = 10443;
+
+export { TLS_PORT, HTTPS_PORT };
+
+/** Result of one TLS+SNI probe against a loopback port. */
+export type HttpsPathProbe = {
+	connect: "ok" | "refused" | "timeout" | "error";
+	tls: "ok" | "alert" | "skipped" | "error";
+	issuer: string | null;
+	subject: string | null;
+	error?: string;
+};
+
+export type HttpsPathStatus =
+	| "ok"
+	| "competing-proxy"
+	| "redirect-broken"
+	| "rule-missing"
+	| "proxy-down";
+
+export type HttpsPathDiagnosis = {
+	status: HttpsPathStatus;
+	message: string;
+	/** True when the check should fail doctor (non-green). */
+	ok: boolean;
+};
 
 const ANCHOR_BODY = `rdr pass on lo0 inet proto tcp from any to any port ${HTTPS_PORT} -> 127.0.0.1 port ${TLS_PORT}\n`;
 
@@ -107,6 +134,214 @@ function tcpProbe(host: string, port: number): boolean {
 }
 
 type RuleStatus = "active" | "missing" | "unknown";
+
+const PORTLESS_ISSUER = /portless/i;
+const SLIM_ISSUER = /\bslim\b/i;
+
+/**
+ * Classify the canonical HTTPS data path from two probes + a slim-listen signal.
+ *
+ * Pure over its inputs so the auctionomy#1187 / nterprise-dev#14 failure modes
+ * are unit-testable without touching pfctl:
+ *   - TCP on :443 succeeds because slim owns the redirect, but Portless SNI
+ *     gets `tlsv1 alert internal error` → competing-proxy
+ *   - :443 presents a slim certificate → competing-proxy
+ *   - Portless on :1355 works, :443 TLS fails, slim absent → redirect-broken
+ *   - :443 refuses while :1355 works → rule-missing
+ */
+export function classifyHttpsPath(input: {
+	via443: HttpsPathProbe;
+	viaProxy: HttpsPathProbe;
+	slimListening: boolean;
+}): HttpsPathDiagnosis {
+	const { via443, viaProxy, slimListening } = input;
+	const proxyTlsOk = viaProxy.tls === "ok";
+	const path443TlsOk = via443.tls === "ok";
+	const issuerIsPortless = !!via443.issuer && PORTLESS_ISSUER.test(via443.issuer);
+	const issuerIsSlim = !!via443.issuer && SLIM_ISSUER.test(via443.issuer);
+
+	if (path443TlsOk && issuerIsPortless) {
+		return {
+			status: "ok",
+			ok: true,
+			message: "active (TLS+SNI through :443 reaches Portless)",
+		};
+	}
+
+	if (path443TlsOk && issuerIsSlim) {
+		return {
+			status: "competing-proxy",
+			ok: false,
+			message:
+				`port 443 is terminating TLS as slim (${via443.issuer}) — ` +
+				`Claudius Studio can use Portless instead of slim; run \`slim stop\` ` +
+				`(and migrate Studio off slim) so nterprise PF can redirect :${HTTPS_PORT} ` +
+				`→ Portless :${TLS_PORT}, not slim :${SLIM_PROXY_PORT}`,
+		};
+	}
+
+	if (via443.connect === "ok" && via443.tls !== "ok" && (slimListening || issuerIsSlim)) {
+		return {
+			status: "competing-proxy",
+			ok: false,
+			message:
+				`port 443 accepts TCP but TLS fails` +
+				(via443.error ? ` (${via443.error})` : "") +
+				` while slim is listening on :${SLIM_PROXY_PORT}. ` +
+				`slim owns the :${HTTPS_PORT} redirect, so Portless SNI cannot complete. ` +
+				`Swap Claudius Studio to Portless, run \`slim stop\`, then \`nterprise doctor --fix\`.`,
+		};
+	}
+
+	if (proxyTlsOk && via443.connect === "refused") {
+		return {
+			status: "rule-missing",
+			ok: false,
+			message: `missing — :${HTTPS_PORT} refused while Portless :${TLS_PORT} is up; run: nterprise doctor --fix`,
+		};
+	}
+
+	if (proxyTlsOk && via443.connect === "ok" && via443.tls !== "ok") {
+		return {
+			status: "redirect-broken",
+			ok: false,
+			message:
+				`broken — Portless :${TLS_PORT} TLS works but :${HTTPS_PORT} TLS fails` +
+				(via443.error ? ` (${via443.error})` : "") +
+				`; PF redirect is not delivering a functional Portless path`,
+		};
+	}
+
+	if (!proxyTlsOk) {
+		return {
+			status: "proxy-down",
+			ok: true, // informational — nterprise starts the proxy on demand
+			message: `can't verify (Portless :${TLS_PORT} TLS not up yet)`,
+		};
+	}
+
+	return {
+		status: "redirect-broken",
+		ok: false,
+		message: `unhealthy :${HTTPS_PORT} path — run: nterprise doctor --fix`,
+	};
+}
+
+function slimProxyListening(): boolean {
+	return tcpProbe("127.0.0.1", SLIM_PROXY_PORT);
+}
+
+/**
+ * TLS+SNI probe against a loopback port using openssl (present on macOS).
+ *
+ * We deliberately do not use Bun's fetch here: we need the peer certificate
+ * issuer even when the HTTP response is 404, and we need to distinguish
+ * "TLS alert" from "connection refused".
+ */
+export function probeHttpsPath(
+	port: number,
+	servername: string,
+): HttpsPathProbe {
+	try {
+		// openssl s_client blocks on stdin for an optional HTTP request; feed
+		// EOF immediately. Cap runtime so doctor stays snappy if :443 blackholes.
+		// Avoid `-brief`: it omits issuer=, which we need to distinguish
+		// Portless (`CN=portless Local CA`) from slim (`CN=slim Root CA`).
+		const r = Bun.spawnSync(
+			[
+				"openssl",
+				"s_client",
+				"-connect",
+				`127.0.0.1:${port}`,
+				"-servername",
+				servername,
+				"-alpn",
+				"http/1.1",
+			],
+			{
+				stdin: new Uint8Array(),
+				stdout: "pipe",
+				stderr: "pipe",
+				timeout: 4000,
+			},
+		);
+		const stdout = new TextDecoder().decode(r.stdout);
+		const stderr = new TextDecoder().decode(r.stderr);
+		const out = `${stdout}\n${stderr}`;
+
+		if (/Connection refused|connect: errno=61|ECONNREFUSED/i.test(out)) {
+			return { connect: "refused", tls: "skipped", issuer: null, subject: null };
+		}
+		if (/Operation timed out|ETIMEDOUT/i.test(out)) {
+			return { connect: "timeout", tls: "skipped", issuer: null, subject: null };
+		}
+
+		const issuer =
+			(out.match(/^issuer\s*=\s*(.+)$/im) || out.match(/Issuer\s*:\s*(.+)/i))?.[1]?.trim() ??
+			null;
+		const subject =
+			(out.match(/^subject\s*=\s*(.+)$/im) || out.match(/Subject\s*:\s*(.+)/i))?.[1]?.trim() ??
+			null;
+
+		if (/alert internal error|tlsv1 alert|SSL alert number/i.test(out)) {
+			return {
+				connect: "ok",
+				tls: "alert",
+				issuer,
+				subject,
+				error: "tlsv1 alert internal error",
+			};
+		}
+
+		if (
+			subject ||
+			issuer ||
+			/Ciphersuite|Cipher is|Verification:\s*OK|Protocol version:|New, TLS/i.test(out)
+		) {
+			// Handshake produced peer identity — treat as TLS ok even if verify
+			// failed (local CA may be untrusted in openssl's default store).
+			return {
+				connect: "ok",
+				tls: "ok",
+				issuer,
+				subject,
+			};
+		}
+
+		if (r.exitCode !== 0) {
+			return {
+				connect: "ok",
+				tls: "error",
+				issuer,
+				subject,
+				error: stderr.trim().split("\n").pop() || "openssl failed",
+			};
+		}
+
+		return { connect: "ok", tls: "ok", issuer, subject };
+	} catch (err) {
+		return {
+			connect: "error",
+			tls: "error",
+			issuer: null,
+			subject: null,
+			error: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+export function diagnoseCanonicalHttpsPath(
+	servername = "doctor-probe.portless.local",
+): HttpsPathDiagnosis {
+	const viaProxy = probeHttpsPath(TLS_PORT, servername);
+	const via443 = probeHttpsPath(HTTPS_PORT, servername);
+	return classifyHttpsPath({
+		via443,
+		viaProxy,
+		slimListening: slimProxyListening(),
+	});
+}
+
 
 function pfctlRuleStatus(): RuleStatus {
 	// First try: sudo -n is authoritative when cred is cached. Returns
@@ -353,40 +588,58 @@ function gatherChecks(): CheckResult[] {
 			fix: ldOk ? undefined : installLaunchDaemon,
 		});
 
-		const ruleStatus = pfctlRuleStatus();
-		// Tri-state semantics:
-		//   active  → ✓ confirmed by sudo or by reachable :443+:1355
-		//   missing → ✗ confirmed broken; needs kickstart or daemon reinstall
-		//   unknown → ✓ informational; sudo cred uncached AND proxy not yet up,
-		//             so we can't prove either way. Don't auto-fix — the
-		//             LaunchDaemon's job is to keep the rule alive, and
-		//             auto-fixing here causes spurious sudo prompts on every
-		//             cold-start `bun run dev`. User can run `nterprise doctor`
-		//             explicitly (with sudo) for a definitive check.
-		const ruleMessage = {
-			active: "active",
-			missing: "missing — run: nterprise doctor --fix",
-			unknown: "can't verify (sudo not cached, proxy not up); trusting LaunchDaemon",
-		}[ruleStatus];
+		// End-to-end canonical HTTPS path (#14 / auctionomy#1187).
+		// A TCP probe on :443 is not enough: slim also redirects :443 and will
+		// make nc -z succeed while Portless SNI fails with
+		// `tlsv1 alert internal error`. Probe TLS+SNI and require a Portless
+		// issuer before calling the path green.
+		const httpsPath = diagnoseCanonicalHttpsPath();
 		checks.push({
-			name: "pfctl 443 → 1355 rule active",
-			ok: ruleStatus !== "missing",
-			message: ruleMessage,
-			// Only fix when definitively missing.
+			name: "canonical HTTPS path (:443 TLS+SNI → Portless)",
+			ok: httpsPath.ok,
+			message: httpsPath.message,
 			fix:
-				ruleStatus !== "missing"
-					? undefined
-					: ldOk
+				httpsPath.status === "rule-missing" || httpsPath.status === "redirect-broken"
+					? ldOk
 						? async () => {
 								await runSudo(["launchctl", "kickstart", "-k", `system/${LABEL}`]);
-								if (pfctlRuleStatus() === "missing") {
+								const again = diagnoseCanonicalHttpsPath();
+								if (!again.ok) {
 									throw new Error(
-										`pfctl rule still missing after kickstart — see /var/log/${LABEL}.log`,
+										`canonical HTTPS path still unhealthy after kickstart: ${again.message} ` +
+											`(see /var/log/${LABEL}.log)`,
 									);
 								}
 							}
-						: installLaunchDaemon,
+						: installLaunchDaemon
+					: httpsPath.status === "competing-proxy"
+						? async () => {
+								throw new Error(
+									`${httpsPath.message}\n` +
+										`nterprise cannot auto-stop slim. ` +
+										`Claudius Studio should use Portless (not slim) so :${HTTPS_PORT} stays free; ` +
+										`run \`slim stop\`, then re-run doctor --fix.`,
+								);
+							}
+						: undefined,
 		});
+
+		// Keep the legacy TCP/sudo rule check as a secondary signal so
+		// LaunchDaemon kickstart still has a clear "rule missing" path when
+		// the proxy is down and TLS cannot be probed.
+		const ruleStatus = pfctlRuleStatus();
+		if (ruleStatus === "missing" && httpsPath.status === "proxy-down") {
+			checks.push({
+				name: "pfctl 443 → 1355 rule active",
+				ok: false,
+				message: "missing — run: nterprise doctor --fix",
+				fix: ldOk
+					? async () => {
+							await runSudo(["launchctl", "kickstart", "-k", `system/${LABEL}`]);
+						}
+					: installLaunchDaemon,
+			});
+		}
 	} else {
 		checks.push({
 			name: "platform support",
