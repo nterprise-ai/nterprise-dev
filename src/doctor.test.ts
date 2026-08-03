@@ -86,12 +86,7 @@ describe("migrateOldDaemon", () => {
 	});
 });
 
-import {
-	classifyHttpsPath,
-	type HttpsPathProbe,
-	SLIM_PROXY_PORT,
-	TLS_PORT,
-} from "./doctor";
+import { classifyHttpsPath, type HttpsPathProbe, SLIM_PROXY_PORT, TLS_PORT } from "./doctor";
 
 describe("classifyHttpsPath", () => {
 	const portlessOk: HttpsPathProbe = {
