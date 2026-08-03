@@ -39,7 +39,7 @@ const HTTPS_PORT = 443;
 /** Slim's local HTTPS listener — competes with Portless for the port-443 PF redirect. */
 export const SLIM_PROXY_PORT = 10443;
 
-export { TLS_PORT, HTTPS_PORT };
+export { HTTPS_PORT, TLS_PORT };
 
 /** Result of one TLS+SNI probe against a loopback port. */
 export type HttpsPathProbe = {
@@ -238,10 +238,7 @@ function slimProxyListening(): boolean {
  * issuer even when the HTTP response is 404, and we need to distinguish
  * "TLS alert" from "connection refused".
  */
-export function probeHttpsPath(
-	port: number,
-	servername: string,
-): HttpsPathProbe {
+export function probeHttpsPath(port: number, servername: string): HttpsPathProbe {
 	try {
 		// openssl s_client blocks on stdin for an optional HTTP request; feed
 		// EOF immediately. Cap runtime so doctor stays snappy if :443 blackholes.
@@ -277,8 +274,7 @@ export function probeHttpsPath(
 		}
 
 		const issuer =
-			(out.match(/^issuer\s*=\s*(.+)$/im) || out.match(/Issuer\s*:\s*(.+)/i))?.[1]?.trim() ??
-			null;
+			(out.match(/^issuer\s*=\s*(.+)$/im) || out.match(/Issuer\s*:\s*(.+)/i))?.[1]?.trim() ?? null;
 		const subject =
 			(out.match(/^subject\s*=\s*(.+)$/im) || out.match(/Subject\s*:\s*(.+)/i))?.[1]?.trim() ??
 			null;
@@ -341,7 +337,6 @@ export function diagnoseCanonicalHttpsPath(
 		slimListening: slimProxyListening(),
 	});
 }
-
 
 function pfctlRuleStatus(): RuleStatus {
 	// First try: sudo -n is authoritative when cred is cached. Returns
