@@ -1,0 +1,36 @@
+name: Update bun.lock for Dependabot
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  update-lockfile:
+    name: Regenerate bun.lock
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Regenerate lockfile
+        run: bun install
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit updated bun.lock
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet bun.lock; then
+            echo "bun.lock unchanged, nothing to commit"
+          else
+            git add bun.lock
+            git commit -m "chore: update bun.lock for dependabot bump"
+            git push
+          fi
