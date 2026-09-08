@@ -36,7 +36,7 @@ Tag `v*` on `main` and the `publish.yml` GH Action runs `bun publish` against Gi
 
 ## LaunchDaemon
 
-Owns `/Library/LaunchDaemons/dev.nterprise.pfctl.plist` + `/etc/pf.anchors/dev.nterprise.pfctl`. `nterprise doctor --fix` installs both; if a legacy `dev.portfree.pfctl` is present, the same fix path bootouts it and removes its plist + anchor first (one sudo prompt).
+Owns the `dev.nterprise.pfctl` LaunchDaemon, root-owned helper, and dedicated PF anchor. `nterprise doctor --fix` upgrades boot-only installations to 30-second reconciliation and migrates legacy `dev.portfree.pfctl`. The attended installer backs up and reloads `/etc/pf.conf`; unattended recovery only touches the owned anchor. See README for the installation impact and verification boundary.
 
 ## Repos registry
 
