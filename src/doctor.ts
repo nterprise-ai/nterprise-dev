@@ -22,14 +22,6 @@
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	configurePfConf,
-	PF_ANCHOR,
-	PF_HELPER,
-	PF_HELPER_PATH,
-	PF_PLIST,
-	PF_RULE,
-} from "./pf-service";
 import { hasPortless } from "./portless";
 
 // ---- Constants ------------------------------------------------------------
@@ -71,6 +63,30 @@ export type HttpsPathDiagnosis = {
 	/** True when the check should fail doctor (non-green). */
 	ok: boolean;
 };
+
+const ANCHOR_BODY = `rdr pass on lo0 inet proto tcp from any to any port ${HTTPS_PORT} -> 127.0.0.1 port ${TLS_PORT}\n`;
+
+const PLIST_BODY = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/sbin/pfctl</string>
+        <string>-Ef</string>
+        <string>${ANCHOR_PATH}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardErrorPath</key>
+    <string>/var/log/${LABEL}.log</string>
+    <key>StandardOutPath</key>
+    <string>/var/log/${LABEL}.log</string>
+</dict>
+</plist>
+`;
 
 // ---- Old-daemon detection (used by migration + first-run guard) ------------
 
@@ -326,7 +342,7 @@ function pfctlRuleStatus(): RuleStatus {
 	// First try: sudo -n is authoritative when cred is cached. Returns
 	// "active" or "missing" with confidence.
 	try {
-		const r = Bun.spawnSync(["sudo", "-n", "pfctl", "-a", PF_ANCHOR, "-sn"], {
+		const r = Bun.spawnSync(["sudo", "-n", "pfctl", "-sn"], {
 			stdout: "pipe",
 			stderr: "pipe",
 		});
@@ -359,13 +375,6 @@ function pfctlRuleActive(): boolean {
 function launchDaemonInstalled(): boolean {
 	if (!existsSync(PLIST_PATH)) return false;
 	if (!existsSync(ANCHOR_PATH)) return false;
-	if (!existsSync(PF_HELPER_PATH)) return false;
-	if (
-		readFileSync(PLIST_PATH, "utf8") !== PF_PLIST ||
-		readFileSync(PF_HELPER_PATH, "utf8") !== PF_HELPER ||
-		readFileSync(ANCHOR_PATH, "utf8") !== PF_RULE
-	)
-		return false;
 	try {
 		const r = Bun.spawnSync(["launchctl", "print", `system/${LABEL}`], {
 			stdout: "pipe",
@@ -397,11 +406,6 @@ function isInteractive(): boolean {
 }
 
 async function runSudo(args: string[]): Promise<void> {
-	if (process.getuid?.() === 0) {
-		const proc = Bun.spawn(args, { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
-		if ((await proc.exited) !== 0) throw new Error(`Command failed: ${args.join(" ")}`);
-		return;
-	}
 	if (!isInteractive()) {
 		throw new Error(
 			`sudo command needed but stdin is not a TTY: sudo ${args.join(" ")}\n` +
@@ -490,38 +494,12 @@ async function installLaunchDaemon(): Promise<void> {
 	const dir = mkdtempSync(join(tmpdir(), "nterprise-doctor-"));
 	const tmpAnchor = join(dir, "anchor");
 	const tmpPlist = join(dir, "plist");
-	const tmpHelper = join(dir, "helper");
-	const tmpConf = join(dir, "pf.conf");
-	const originalConf = readFileSync("/etc/pf.conf", "utf8");
-	writeFileSync(tmpAnchor, PF_RULE);
-	writeFileSync(tmpPlist, PF_PLIST);
-	writeFileSync(tmpHelper, PF_HELPER);
-	writeFileSync(tmpConf, configurePfConf(originalConf));
+	writeFileSync(tmpAnchor, ANCHOR_BODY);
+	writeFileSync(tmpPlist, PLIST_BODY);
 
 	console.log(`   → installing LaunchDaemon (${LABEL}); sudo prompt incoming…`);
-	await runSudo([
-		"install",
-		"-d",
-		"-o",
-		"root",
-		"-g",
-		"wheel",
-		"-m",
-		"0755",
-		"/Library/PrivilegedHelperTools",
-	]);
-	await runSudo(["install", "-o", "root", "-g", "wheel", "-m", "0644", tmpAnchor, ANCHOR_PATH]);
-	await runSudo(["pfctl", "-nf", tmpConf]);
-	// Only the attended install reloads the main ruleset. Preserve a rollback copy.
-	await runSudo(["cp", "-p", "/etc/pf.conf", `/etc/pf.conf.nterprise-backup-${Date.now()}`]);
-	await runSudo(["install", "-o", "root", "-g", "wheel", "-m", "0644", tmpConf, "/etc/pf.conf"]);
-	await runSudo(["install", "-o", "root", "-g", "wheel", "-m", "0755", tmpHelper, PF_HELPER_PATH]);
-	await runSudo(["install", "-o", "root", "-g", "wheel", "-m", "0644", tmpPlist, PLIST_PATH]);
-	console.log(
-		"   → reloading /etc/pf.conf once; unattended recovery only changes the nterprise anchor.",
-	);
-	await runSudo(["pfctl", "-f", "/etc/pf.conf"]);
-	await runSudo([PF_HELPER_PATH]);
+	await runSudo(["install", "-m", "0644", tmpAnchor, ANCHOR_PATH]);
+	await runSudo(["install", "-m", "0644", tmpPlist, PLIST_PATH]);
 
 	// Bootstrap is the modern launchctl API (macOS 10.10+).
 	// If it's already loaded, re-running may error; bootout first to keep idempotent.
@@ -541,7 +519,7 @@ async function installLaunchDaemon(): Promise<void> {
 	if (!pfctlRuleActive()) {
 		throw new Error(`pfctl rule did not activate after install — check /var/log/${LABEL}.log`);
 	}
-	console.log("   ✓ LaunchDaemon installed; scoped forwarding reconciles every 30 seconds.");
+	console.log("   ✓ LaunchDaemon installed; pfctl rule is reboot-persistent.");
 }
 
 async function uninstallLaunchDaemon(): Promise<void> {
@@ -552,38 +530,35 @@ async function uninstallLaunchDaemon(): Promise<void> {
 	} catch {
 		// ignore — already unloaded
 	}
-	const dir = mkdtempSync(join(tmpdir(), "nterprise-uninstall-"));
-	const tmpConf = join(dir, "pf.conf");
-	writeFileSync(tmpConf, configurePfConf(readFileSync("/etc/pf.conf", "utf8"), false));
-	await runSudo(["pfctl", "-nf", tmpConf]);
-	await runSudo(["cp", "-p", "/etc/pf.conf", `/etc/pf.conf.nterprise-backup-${Date.now()}`]);
-	await runSudo(["install", "-o", "root", "-g", "wheel", "-m", "0644", tmpConf, "/etc/pf.conf"]);
-	await runSudo(["pfctl", "-a", PF_ANCHOR, "-F", "nat"]);
-	// Leave the now-empty runtime dispatcher until the next system reload.
-	// Never flush unrelated rules/states or disable PF for other services.
-	for (const path of [PLIST_PATH, ANCHOR_PATH, PF_HELPER_PATH]) {
-		if (existsSync(path)) await runSudo(["rm", "-f", path]);
+	if (existsSync(PLIST_PATH)) await runSudo(["rm", "-f", PLIST_PATH]);
+	if (existsSync(ANCHOR_PATH)) await runSudo(["rm", "-f", ANCHOR_PATH]);
+	// Flush the running ruleset so the NAT rule is removed without reboot.
+	try {
+		await runSudo(["pfctl", "-F", "all"]);
+	} catch {
+		// ignore — pfctl may already be empty
 	}
 	console.log("   ✓ LaunchDaemon removed.");
 }
 
-/** Give the privileged launchd job one interval to repair; cron never needs sudo. */
-async function repairHttpsPath(): Promise<void> {
-	if (isInteractive() || process.getuid?.() === 0) {
-		await installLaunchDaemon();
-	} else {
-		const deadline = Date.now() + 35_000;
-		while (Date.now() < deadline) {
-			if (diagnoseCanonicalHttpsPath().ok) return;
-			await Bun.sleep(1_000);
-		}
-	}
-	const again = diagnoseCanonicalHttpsPath();
-	if (!again.ok)
-		throw new Error(
-			`HTTPS did not recover: ${again.message}. Check /var/log/${LABEL}.log; ` +
-				`if the main PF dispatcher was removed, run nterprise doctor --fix interactively.`,
+/** Portless owns boot persistence when its native macOS service is installed. */
+export function nativePortlessServiceInstalled(): boolean {
+	if (process.platform !== "darwin") return false;
+	const plist = "/Library/LaunchDaemons/sh.portless.proxy.plist";
+	if (!existsSync(plist)) return false;
+	try {
+		const content = readFileSync(plist, "utf8");
+		if (!content.includes("<string>443</string>") || !content.includes("<key>KeepAlive</key>"))
+			return false;
+		return (
+			Bun.spawnSync(["launchctl", "print", "system/sh.portless.proxy"], {
+				stdout: "pipe",
+				stderr: "pipe",
+			}).exitCode === 0
 		);
+	} catch {
+		return false;
+	}
 }
 
 // ---- Check runners --------------------------------------------------------
@@ -606,6 +581,21 @@ function gatherChecks(): CheckResult[] {
 			: "not found — install: bun install -g portless (or npm install -g portless)",
 	});
 
+	if (nativePortlessServiceInstalled()) {
+		checks.push({
+			name: "Portless native startup service",
+			ok: true,
+			message: "loaded (sh.portless.proxy); no PF forwarding required",
+		});
+		const path = diagnoseCanonicalHttpsPath();
+		checks.push({
+			name: "canonical HTTPS path (:443 TLS+SNI → Portless)",
+			ok: path.status === "ok",
+			message: path.message,
+		});
+		return checks;
+	}
+
 	if (process.platform === "darwin") {
 		// Surface old-daemon presence so `nterprise doctor` (read-only) reports
 		// it. The fix is part of installLaunchDaemon's sequence; we represent
@@ -624,7 +614,7 @@ function gatherChecks(): CheckResult[] {
 		checks.push({
 			name: "pfctl LaunchDaemon installed",
 			ok: ldOk,
-			message: ldOk ? `loaded (${LABEL})` : `missing or outdated — run: nterprise doctor --fix`,
+			message: ldOk ? `loaded (${LABEL})` : `missing — run: nterprise doctor --fix`,
 			fix: ldOk ? undefined : installLaunchDaemon,
 		});
 
@@ -641,7 +631,16 @@ function gatherChecks(): CheckResult[] {
 			fix:
 				httpsPath.status === "rule-missing" || httpsPath.status === "redirect-broken"
 					? ldOk
-						? repairHttpsPath
+						? async () => {
+								await runSudo(["launchctl", "kickstart", "-k", `system/${LABEL}`]);
+								const again = diagnoseCanonicalHttpsPath();
+								if (!again.ok) {
+									throw new Error(
+										`canonical HTTPS path still unhealthy after kickstart: ${again.message} ` +
+											`(see /var/log/${LABEL}.log)`,
+									);
+								}
+							}
 						: installLaunchDaemon
 					: httpsPath.status === "competing-proxy"
 						? async () => {
@@ -666,7 +665,7 @@ function gatherChecks(): CheckResult[] {
 				message: "missing — run: nterprise doctor --fix",
 				fix: ldOk
 					? async () => {
-							await runSudo([PF_HELPER_PATH]);
+							await runSudo(["launchctl", "kickstart", "-k", `system/${LABEL}`]);
 						}
 					: installLaunchDaemon,
 			});
@@ -783,6 +782,15 @@ export async function runUninstall(): Promise<number> {
  */
 export async function runPreflightOrFix(): Promise<void> {
 	if (process.platform !== "darwin") return;
+	if (nativePortlessServiceInstalled()) {
+		for (let attempt = 0; attempt < 30; attempt++) {
+			if (diagnoseCanonicalHttpsPath().status === "ok") return;
+			await Bun.sleep(1000);
+		}
+		throw new Error(
+			"Portless startup service did not restore canonical HTTPS within 30 seconds; inspect portless service status and its service.log.",
+		);
+	}
 
 	if (oldDaemonPresent()) {
 		console.error(
@@ -795,15 +803,6 @@ export async function runPreflightOrFix(): Promise<void> {
 	const checks = gatherChecks();
 	const failures = checks.filter((c) => !c.ok);
 	if (failures.length === 0) return;
-	if (
-		launchDaemonInstalled() &&
-		failures.some((c) => c.name === "canonical HTTPS path (:443 TLS+SNI → Portless)")
-	) {
-		const path = diagnoseCanonicalHttpsPath();
-		if (path.status === "rule-missing" || path.status === "redirect-broken") {
-			await repairHttpsPath();
-		}
-	}
 
 	// Only act on boot-persistence pieces; the proxy will be started below,
 	// and bun/portless not-installed errors are handled elsewhere with
