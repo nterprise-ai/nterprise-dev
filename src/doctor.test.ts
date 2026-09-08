@@ -187,3 +187,20 @@ describe("classifyHttpsPath", () => {
 		expect(result.status).toBe("ok");
 	});
 });
+
+describe("native Portless direct HTTPS", () => {
+	test("accepts native port 443 with the legacy proxy stopped", () => {
+		const result = classifyHttpsPath({
+			via443: {
+				connect: "ok",
+				tls: "ok",
+				issuer: "CN=portless Local CA",
+				subject: "CN=doctor-probe.portless.local",
+			},
+			viaProxy: { connect: "refused", tls: "skipped", issuer: null, subject: null },
+			slimListening: false,
+		});
+		expect(result.status).toBe("ok");
+		expect(result.ok).toBe(true);
+	});
+});

@@ -19,7 +19,7 @@
  * installing the new `dev.nterprise.pfctl` daemon. One combined sudo prompt.
  */
 
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hasPortless } from "./portless";
@@ -541,6 +541,26 @@ async function uninstallLaunchDaemon(): Promise<void> {
 	console.log("   ✓ LaunchDaemon removed.");
 }
 
+/** Portless owns boot persistence when its native macOS service is installed. */
+export function nativePortlessServiceInstalled(): boolean {
+	if (process.platform !== "darwin") return false;
+	const plist = "/Library/LaunchDaemons/sh.portless.proxy.plist";
+	if (!existsSync(plist)) return false;
+	try {
+		const content = readFileSync(plist, "utf8");
+		if (!content.includes("<string>443</string>") || !content.includes("<key>KeepAlive</key>"))
+			return false;
+		return (
+			Bun.spawnSync(["launchctl", "print", "system/sh.portless.proxy"], {
+				stdout: "pipe",
+				stderr: "pipe",
+			}).exitCode === 0
+		);
+	} catch {
+		return false;
+	}
+}
+
 // ---- Check runners --------------------------------------------------------
 
 function gatherChecks(): CheckResult[] {
@@ -560,6 +580,21 @@ function gatherChecks(): CheckResult[] {
 			? "ok"
 			: "not found — install: bun install -g portless (or npm install -g portless)",
 	});
+
+	if (nativePortlessServiceInstalled()) {
+		checks.push({
+			name: "Portless native startup service",
+			ok: true,
+			message: "loaded (sh.portless.proxy); no PF forwarding required",
+		});
+		const path = diagnoseCanonicalHttpsPath();
+		checks.push({
+			name: "canonical HTTPS path (:443 TLS+SNI → Portless)",
+			ok: path.status === "ok",
+			message: path.message,
+		});
+		return checks;
+	}
 
 	if (process.platform === "darwin") {
 		// Surface old-daemon presence so `nterprise doctor` (read-only) reports
@@ -747,6 +782,15 @@ export async function runUninstall(): Promise<number> {
  */
 export async function runPreflightOrFix(): Promise<void> {
 	if (process.platform !== "darwin") return;
+	if (nativePortlessServiceInstalled()) {
+		for (let attempt = 0; attempt < 30; attempt++) {
+			if (diagnoseCanonicalHttpsPath().status === "ok") return;
+			await Bun.sleep(1000);
+		}
+		throw new Error(
+			"Portless startup service did not restore canonical HTTPS within 30 seconds; inspect portless service status and its service.log.",
+		);
+	}
 
 	if (oldDaemonPresent()) {
 		console.error(

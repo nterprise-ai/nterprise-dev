@@ -77,3 +77,15 @@ bun run build
 ## LaunchDaemon
 
 Installs `dev.nterprise.pfctl` (renamed from `dev.portfree.pfctl`). `nterprise doctor --fix` migrates the old daemon transparently — one combined sudo prompt covers teardown of the old plist + anchor and install of the new ones.
+
+
+For unattended local HTTPS, prefer Portless 0.15.6's native `portless service
+install --port 443 --https --tld <your-domain> --state-dir <existing-state>`.
+It binds directly to 443 and launchd restarts it at boot or after a crash. Keep
+the existing state directory to preserve routes and certificates. Installation
+requires administrator authorization. Retire the old development-only PF rule
+and LaunchDaemon during migration, preserving other firewall rules. `nterprise
+doctor` recognizes the native service and validates TLS+SNI; dev preflight waits
+up to 30 seconds for native recovery instead of reinstalling the old PF job.
+Application processes require their own native OS supervision; the Portless
+startup service supervises the proxy only.
