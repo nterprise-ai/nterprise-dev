@@ -6,14 +6,17 @@ import { runPreflightOrFix } from "./doctor";
 import { ensureEnvFiles } from "./env-files";
 import { hasPortless } from "./portless";
 import { loadEnvStack } from "./read-env-stack";
+import {
+	parseRoutesTable,
+	type RouteEntry,
+	RoutesTableUnreadableError,
+	removeHostnames,
+	removeOwnedEntries,
+	sameRoutes,
+	upsertEntries,
+} from "./routes-table";
 import { computeTenantHostname } from "./tenant-hostname";
 import type { AppConfig, DevServerConfig, ResolvedDevServerConfig, TenantConfig } from "./types";
-
-interface RouteEntry {
-	hostname: string;
-	port: number;
-	pid: number;
-}
 
 const PORTLESS_DIR = join(homedir(), ".portless");
 const ROUTES_PATH = join(PORTLESS_DIR, "routes.json");
@@ -377,22 +380,36 @@ async function findAppPort(preferred?: number): Promise<number> {
 	throw new Error("Could not find a free app port");
 }
 
-function readRoutes(): RouteEntry[] {
+const READ_ROUTES_ATTEMPTS = 3;
+const READ_ROUTES_RETRY_MS = 50;
+
+function readRoutesFileOnce(): RouteEntry[] {
+	let raw: string | null;
 	try {
-		const raw = readFileSync(ROUTES_PATH, "utf8");
-		const parsed = JSON.parse(raw) as unknown;
-		if (!Array.isArray(parsed)) return [];
-		return parsed.filter((entry): entry is RouteEntry => {
-			if (typeof entry !== "object" || entry === null) return false;
-			const route = entry as RouteEntry;
-			return (
-				typeof route.hostname === "string" &&
-				typeof route.port === "number" &&
-				typeof route.pid === "number"
-			);
-		});
-	} catch {
-		return [];
+		raw = readFileSync(ROUTES_PATH, "utf8");
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+		raw = null;
+	}
+	return parseRoutesTable(raw, ROUTES_PATH);
+}
+
+/**
+ * Read the table for a rewrite. Never returns `[]` for a file it could not
+ * parse: that used to make the next write erase every other writer's routes.
+ * A few short retries cover a read racing an in-place write; a table that
+ * stays unreadable throws `RoutesTableUnreadableError`.
+ */
+function readRoutesForWrite(): RouteEntry[] {
+	for (let attempt = 1; ; attempt++) {
+		try {
+			return readRoutesFileOnce();
+		} catch (err) {
+			if (!(err instanceof RoutesTableUnreadableError) || attempt >= READ_ROUTES_ATTEMPTS) {
+				throw err;
+			}
+			syncSleep(READ_ROUTES_RETRY_MS);
+		}
 	}
 }
 
@@ -402,32 +419,32 @@ function writeRoutes(routes: RouteEntry[]): void {
 	writeFileSync(ROUTES_PATH, JSON.stringify(routes, null, 2));
 }
 
-function withRoutesLock<T>(fn: (routes: RouteEntry[]) => T): T {
+function updateRoutes(fn: (routes: RouteEntry[]) => RouteEntry[]): void {
 	if (!acquireRouteLock()) {
 		throw new Error("Failed to acquire route lock");
 	}
 	try {
-		const routes = readRoutes().filter((route) => route.pid === 0 || isProcessAlive(route.pid));
-		const next = fn(routes);
-		return next;
+		const current = readRoutesForWrite();
+		const live = current.filter((route) => route.pid === 0 || isProcessAlive(route.pid));
+		const next = fn(live);
+		// Skip no-op rewrites: every write wakes each proxy watching the file.
+		if (!sameRoutes(current, next)) writeRoutes(next);
 	} finally {
 		releaseRouteLock();
 	}
 }
 
 function upsertRoutes(entries: RouteEntry[]): void {
-	withRoutesLock((routes) => {
-		const remaining = routes.filter(
-			(route) => !entries.some((entry) => entry.hostname === route.hostname),
-		);
-		writeRoutes([...remaining, ...entries]);
-	});
+	updateRoutes((routes) => upsertEntries(routes, entries));
 }
 
 function removeRoutes(hostnames: string[]): void {
-	withRoutesLock((routes) => {
-		writeRoutes(routes.filter((route) => !hostnames.includes(route.hostname)));
-	});
+	updateRoutes((routes) => removeHostnames(routes, hostnames));
+}
+
+/** Exit cleanup: remove only the exact entries this process registered. */
+function removeOwnedRoutes(owned: RouteEntry[]): void {
+	updateRoutes((routes) => removeOwnedEntries(routes, owned));
 }
 
 function appHostname(app: AppConfig, tld?: string): string {
@@ -562,7 +579,13 @@ export async function createDevServer(config: ResolvedDevServerConfig): Promise<
 	upsertRoutes(routeEntries);
 
 	function cleanup(): void {
-		removeRoutes(routeEntries.map((route) => route.hostname));
+		// Only this process's entries: a sibling checkout that registered the
+		// same hostnames since must keep its routes.
+		try {
+			removeOwnedRoutes(routeEntries);
+		} catch (err) {
+			console.error(`   Could not remove dev routes: ${(err as Error).message}`);
+		}
 		for (const child of children) {
 			try {
 				child.kill();
