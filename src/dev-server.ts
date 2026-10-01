@@ -576,7 +576,20 @@ export async function createDevServer(config: ResolvedDevServerConfig): Promise<
 		}
 	}
 
-	upsertRoutes(routeEntries);
+	try {
+		upsertRoutes(routeEntries);
+	} catch (err) {
+		// The apps are already running. Refusing to touch an unreadable table
+		// (or failing to get the lock) must not leave them orphaned and unrouted.
+		for (const child of children) {
+			try {
+				child.kill();
+			} catch {
+				// ignore
+			}
+		}
+		throw err;
+	}
 
 	function cleanup(): void {
 		// Only this process's entries: a sibling checkout that registered the
